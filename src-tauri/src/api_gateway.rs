@@ -1,4 +1,5 @@
-//! API 转发层：统一走 OpenAI 兼容协议（DeepSeek / 火山 Ark / Ollama /v1）。
+//! API 转发层：统一走 OpenAI 兼容协议。
+//! 支持：DeepSeek / 火山方舟（按量/AgentPlan/CodingPlan） / MiniMax / Ollama / 自定义
 //! 密钥仅从本地配置读取，不落日志、不进仓库。
 
 use reqwest::Client;
@@ -80,12 +81,69 @@ pub async fn chat(messages: Vec<ChatMessage>) -> Result<String, String> {
     }
     let parsed: ChatResp =
         serde_json::from_str(&raw).map_err(|e| format!("响应解析失败: {e}; 原始: {}", truncate(&raw, 300)))?;
-    parsed
+    let content = parsed
         .choices
         .into_iter()
         .next()
         .map(|c| c.message.content)
-        .ok_or_else(|| "API 未返回内容".into())
+        .ok_or_else(|| "API 未返回内容".to_string())?;
+
+    // 部分供应商模型默认带思考标签（MiniMax / DeepSeek R1 / Kimi 等），统一剥掉，面板只保留最终回答
+    Ok(if needs_thinking_strip(&s.provider, &s.chat_model) {
+        strip_thinking(&content)
+    } else {
+        content
+    })
+}
+
+/// 判断是否需要剥离思考标签：MiniMax 全系 + DeepSeek reasoner + Kimi 系列 + 带 reasoner/thinking 的模型名
+fn needs_thinking_strip(provider: &str, model: &str) -> bool {
+    if provider == "minimax" {
+        return true;
+    }
+    let m = model.to_lowercase();
+    m.contains("reasoner") || m.contains("r1") || m.contains("kimi") || m.contains("thinking")
+}
+
+/// 剥掉响应里的 `<think>…</think>` / `<thinking>…</thinking>` 思考片段。
+/// 部分模型思考无法通过参数关闭，只能后处理过滤。
+fn strip_thinking(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        // 同时匹配 <think 和 <thinking（取先出现的那个）
+        let open_think = rest.find("<think");
+        let open_thinking = rest.find("<thinking");
+        let open = match (open_think, open_thinking) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        let Some(open_pos) = open else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..open_pos]);
+        // 找对应的闭合标签
+        let close_think = rest[open_pos..].find("</think");
+        let close_thinking = rest[open_pos..].find("</thinking");
+        let close = match (close_think, close_thinking) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        match close {
+            Some(close_pos) => {
+                let tail = &rest[open_pos + close_pos..];
+                rest = tail.find('>').map(|gt| &tail[gt + 1..]).unwrap_or("");
+            }
+            // 未闭合说明思考被截断，剩余部分一并丢弃
+            None => return out.trim().to_string(),
+        }
+    }
+    out.trim().to_string()
 }
 
 /// FIM 行内补全。language 用于给模型提示，suffix 为光标后文本。
@@ -100,7 +158,10 @@ pub async fn fim_completion(prompt: String, suffix: String, language: String) ->
     let lang_hint = if language.is_empty() { String::new() } else { format!("# language: {language}\n") };
 
     // 不支持原生 /completions 的供应商标记：用 chat 接口模拟
-    if s.provider == "ark" {
+    if matches!(
+        s.provider.as_str(),
+        "ark" | "ark-agent-plan" | "ark-coding-plan" | "minimax"
+    ) {
         let msg = ChatMessage {
             role: "user".into(),
             content: format!(

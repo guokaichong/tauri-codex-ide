@@ -4,7 +4,7 @@
 ## 核心架构思路
 - **本地端**：Tauri2 + Rust + Svelte + 精简Monaco Editor
   只做GUI、本地文件读写、终端白名单命令执行、API请求转发。**本地不跑大模型推理**
-- **AI算力**：优先国内云端API（火山引擎Ark / DeepSeek API，兼容OpenAI协议）；可一键降级本地Ollama(127.0.0.1:11434)
+- **AI算力**：优先国内云端API（火山方舟 Agent Plan / Coding Plan / 按量 + MiniMax开放平台 + DeepSeek API，全部兼容OpenAI协议）；可一键降级本地Ollama(127.0.0.1:11434)。内置 **7 个供应商 · 30+ 模型**，详见下方「AI 模型接入」章节
 - **编译打包**：Rust编译、Tauri打包、资源打包全部在Gitee云端CI流水线执行（见下方「Gitee CI 配置」章节），本机仅写代码。
 - **安全策略**：不会自动上传完整项目源码；**仅用户手动确认后，选中的代码片段才发送到云端API**；API密钥保存在本地，禁止提交仓库。
 
@@ -21,12 +21,105 @@
 - 禁止：Electron、React全家桶重型框架、OpenAI官方接口、海外CDN静态资源
 - 存储：本地JSON持久化配置（API Key、模型、代理、工作目录）
 
+## AI 模型接入（已真机联调）
+
+> 完整版文档（含全部密钥、模型实测结果、校验脚本）：
+> `e:\Code\AI_Projects\VidProj\AI_MODEL_CONFIG.md` / `AI_MODEL_CONFIG.txt`
+> ⚠️ 该文档明文保存密钥，已加入 `.gitignore`，**严禁上传公共仓库**。
+
+### 供应商与端点（内置 7 个，下拉即选）
+
+| 供应商（下拉项） | Base URL | 默认对话模型 | 默认 FIM 模型 |
+| --- | --- | --- | --- |
+| 火山方舟 Agent Plan（订阅） | `https://ark.cn-beijing.volces.com/api/plan/v3` | `doubao-seed-evolving` | `deepseek-v4.1-flash` |
+| 火山方舟 Coding Plan（订阅） | `https://ark.cn-beijing.volces.com/api/coding/v3` | `doubao-seed-evolving` | `deepseek-v4-flash` |
+| 火山方舟 Ark（按量） | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-evolving` | `doubao-seed-evolving` |
+| MiniMax 开放平台 | `https://api.minimax.cn/v1` | `MiniMax-M3` | `MiniMax-M2.7-highspeed` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` | `deepseek-chat` |
+| 本地 Ollama | `http://127.0.0.1:11434/v1` | `qwen2.5-coder:7b` | `qwen2.5-coder:7b` |
+| 自定义 OpenAI 兼容 | 手动填写 | 手动填写 | 手动填写 |
+
+**火山方舟三套通道互不相通**，同一把密钥换端点一定 `401`：
+
+| 通道 | 端点 | 用哪把密钥 |
+| --- | --- | --- |
+| Agent Plan（订阅） | `/api/plan/v3` | Agent Plan 专属密钥 |
+| Coding Plan（订阅） | `/api/coding/v3` | Coding Plan 专属密钥 |
+| 按量付费 | `/api/v3` | 普通按量 API Key |
+
+> Coding Plan 的正确端点是 `/api/coding/v3`，**不是** `/api/plan/v3`；后者实测返回 `401 AuthenticationError`。
+
+### 模型清单（实测 2026-09）
+
+- **Agent Plan**：14 个模型全部 200 OK，含 `doubao-seed-evolving`、`deepseek-v4.1-flash`、`deepseek-v4-pro`、`kimi-k2.8-preview`、`kimi-k2.7-code`、`kimi-k3`、`minimax-m3`、`glm-5.3` / `glm-5.3-flash`、`doubao-seed-2.1-turbo` / `2.0-lite` / `2.0-mini`、`ark-code-latest`
+- **Coding Plan**：7 个可用；`deepseek-v4.1-flash` 返回 `404 UnsupportedModel`（该模型不支持 coding plan），已在注册表中剔除
+- **按量**：文本仅 `doubao-seed-evolving`；图像 `doubao-seedream-5-0-pro-260628`、视频 `doubao-seedance-1-5-pro-251215` 走此通道
+- **MiniMax**：`MiniMax-M3` 等全系可用，返回带 `<think>` 思考标签
+- **DeepSeek**：`deepseek-chat` 可用（服务端返回 `deepseek-flash`）
+
+### 两个特殊处理（后端已实现）
+
+1. **FIM 模拟**：火山方舟与 MiniMax **都没有原生 `/completions` 接口**。`api_gateway.rs` 检测到这几个供应商时，自动改用 `/chat/completions` 组装补全提示词；界面会提示「用对话接口模拟」，属正常现象。
+2. **思考标签剥离**：MiniMax 全系 + Kimi 系列 + `reasoner`/`r1`/`thinking` 模型会返回 `<think>…</think>`（部分字段为 `reasoning_content`）。后端 `strip_thinking()` 统一剥离，未闭合的截断思考一并丢弃，避免污染代码输出。
+
+### 本机部署（配置落盘位置）
+
+配置文件：
+
+```
+%APPDATA%\TauriCodexIDE\local-settings.json
+```
+
+默认完整路径：
+
+```
+C:\Users\Administrator\AppData\Roaming\TauriCodexIDE\local-settings.json
+```
+
+内容结构：
+
+```json
+{
+  "provider": "ark-agent-plan",
+  "api_base": "https://ark.cn-beijing.volces.com/api/plan/v3",
+  "api_key": "<在此填入 Agent Plan 密钥>",
+  "chat_model": "doubao-seed-evolving",
+  "fim_model": "deepseek-v4.1-flash",
+  "timeout_secs": 180,
+  "proxy": "",
+  "workspace_dir": ""
+}
+```
+
+**图形界面方式（推荐，无需手写 JSON）**：
+
+1. 打开 IDE → 设置（Settings）
+2. 「供应商」下拉选目标通道（如 **火山方舟 Agent Plan（订阅）**）
+3. 「对话模型」「FIM 补全模型」下拉选模型
+4. API Key 粘贴对应密钥
+5. 保存（Base URL 会随供应商自动填好）
+
+**部署校验**：
+
+1. 保存后发一条测试对话，确认能出结果
+2. 逐个切换模型各测一条，确认无 `401`（密钥与端点不匹配）/ `404`（模型未开通或不支持该通道）/ `429`（RPM 限流）
+3. 确认 `local-settings.json` 未被提交到仓库（已由 `.gitignore` 排除）
+
+错误码速查：
+
+| 返回 | 含义 | 处理 |
+| --- | --- | --- |
+| `401 AuthenticationError` | 密钥与端点不匹配 | 对照上文三通道表换端点 |
+| `404 InvalidEndpointOrModel.NotFound` | 鉴权通过，模型名错或未开通 | 换模型 ID / 控制台开通 |
+| `404 UnsupportedModel` | 模型不支持当前套餐通道 | 换通道 |
+| `429 ModelAccountRpmRateLimitExceeded` | 触发 RPM 限流 | 降并发 / 稍后重试 |
+
 ## 功能清单
 ### 本地IDE客户端模块
 1. 项目工作区 & 文件树：本地文件夹导入、多文件浏览读写；**沙箱限制，禁止跨目录读取系统敏感文件**
 2. 精简代码编辑器：Monaco Editor裁剪版，语法高亮、代码选中唤起AI对话
 3. AI侧边面板：对话窗口，自然语言生成/重构/查bug/注释/单元测试；支持FIM行内代码补全
-4. 模型设置面板：API地址、APIKEY、模型选择、超时、代理配置；云端API / Ollama本地一键切换
+4. 模型设置面板：API地址、APIKEY、模型选择、超时、代理配置；7 个供应商下拉一键切换（含火山方舟三通道），切换供应商时 Base URL 与默认模型自动填充
 5. AI Agent智能体：
    - 收到需求先输出【修改规划】，列出待修改文件清单，等待用户确认
    - 确认后输出diff格式代码变更

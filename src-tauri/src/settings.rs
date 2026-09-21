@@ -7,7 +7,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
-    /// 供应商标记：deepseek | ark | ollama | custom
+    /// 供应商标记：deepseek | ark | ark-agent-plan | ark-coding-plan | minimax | ollama | custom
     pub provider: String,
     /// OpenAI 兼容基址，如 https://api.deepseek.com/v1
     pub api_base: String,
