@@ -1,0 +1,31 @@
+[package]
+name = "tauri-codex-ide"
+version = "0.1.0"
+description = "轻量化 AI 代码 IDE（对标 Codex，国内环境）"
+authors = ["TauriCodexIDE"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "tauri_codex_ide_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-std", "io-util"] }
+# 纯 rustls，避免 Windows 上依赖 OpenSSL；国内网络编译友好
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+dirs = "5"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"

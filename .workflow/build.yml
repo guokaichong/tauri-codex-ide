@@ -1,0 +1,52 @@
+# Gitee Go 流水线（Gitee 官方识别目录：仓库根 .workflow/）
+# 在 Gitee 仓库 → 构建（Gitee Go）中启用；Windows 资源池标签以当前套餐为准。
+name: tauri-windows-build
+displayName: TauriCodexIDE Windows 打包
+triggers:
+  push:
+    branches:
+      include:
+        - master
+        - main
+  pullRequest:
+    branches:
+      include:
+        - master
+        - main
+stages:
+  - stage:
+      name: build
+      displayName: 云端编译打包
+      jobs:
+        - job:
+            name: windows-build
+            displayName: Windows EXE 构建
+            # Gitee Go Windows 资源池；若套餐未提供，改用自托管 Windows 节点
+            runsOn: x86_64_windows
+            steps:
+              - step: shell@windows
+                displayName: 环境检查
+                inputs:
+                  commands:
+                    - node -v
+                    - npm -v
+                    - rustc --version
+                    - cargo --version
+              - step: shell@windows
+                displayName: 安装依赖
+                inputs:
+                  commands:
+                    - npm config set registry https://registry.npmmirror.com
+                    - npm install --no-audit --no-fund
+              - step: shell@windows
+                displayName: 构建 Tauri（输出免安装 NSIS EXE）
+                inputs:
+                  commands:
+                    - npm run tauri build
+              - step: artifacts@agent
+                displayName: 归档安装包
+                inputs:
+                  name: tauri-codex-ide-windows
+                  paths:
+                    - src-tauri/target/release/bundle/**
+                  retentionDays: 14
