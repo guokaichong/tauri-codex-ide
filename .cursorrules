@@ -1,5 +1,5 @@
 项目：Tauri2 AI 代码 IDE，对标 Codex
-架构：本地轻量 Tauri 客户端；AI 推理请求转发国内云端 API（火山 Ark/DeepSeek），可降级 Ollama 本地；编译打包交给 Gitee CI，本机仅写代码。
+架构：本地轻量 Tauri 客户端；AI 推理请求转发国内云端 API（火山方舟三通道/MiniMax/DeepSeek），可降级 Ollama 本地；编译打包交给 GitHub Actions 的 windows-latest 云端（v* 标签触发），本机仅写代码。
 技术栈强制：Tauri2 + Rust + Svelte + 精简 Monaco Editor；禁止 Electron、React 全家桶。
 性能约束：适配 N95 笔记本，客户端空闲内存控制 < 600MB；禁用不必要动画、轮询。
 安全规则：
